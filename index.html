@@ -5,7 +5,7 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8E%AC%3C/text%3E%3C/svg%3E">
 
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Editor de Shorts v13.4</title>
+<title>Editor de Shorts v13.5</title>
 
 <!-- 1. Google Fonts Integradas -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -645,7 +645,7 @@
 <body>
 
 <header>
-  <h1>Editor de Shorts v13.4</h1>
+  <h1>Editor de Shorts v13.5</h1>
   
   <!-- Desplegable para Nuevos Usuarios -->
   <div class="guide-dropdown-wrapper">
@@ -1144,7 +1144,7 @@
     }
   };
 
-  // ======= Logica FFmpeg (v13.4 - corregida) =======
+  // ======= Logica FFmpeg (v13.5 - corregida) =======
   let ffmpeg = null;
   let engineLoading = false;
 
@@ -1152,22 +1152,30 @@
   const SOURCES = {
     lib: [
       "./ffmpeg.js",
+      "./src_ffmpeg.js",
       "./ffmpeg.umd.js",
       "https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js",
       "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"
     ],
     worker: [
       "./814.ffmpeg.js",
+      "./src_814.ffmpeg.js",
       "https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/814.ffmpeg.js",
       "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/814.ffmpeg.js"
     ],
     core: [
       "./ffmpeg-core.js",
+      "./src_ffmpeg-core.js",
+      "./src/ffmpeg-core.js",
+      "./dist/ffmpeg-core.js",
       "https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js",
       "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js"
     ],
     wasm: [
       "./ffmpeg-core.wasm",
+      "./src_ffmpeg-core.wasm",
+      "./src/ffmpeg-core.wasm",
+      "./dist/ffmpeg-core.wasm",
       "https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm",
       "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm"
     ]
