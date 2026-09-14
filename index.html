@@ -1,0 +1,1361 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Editor de Shorts v13.3</title>
+
+<!-- 1. Google Fonts Integradas -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Caveat:wght@700&family=Comic+Neue:ital,wght@1,700&family=Courier+Prime:ital,wght@1,700&family=Inter:wght@400;500;600;700;800&family=Montserrat:wght@800;900&family=Oswald:wght@700&family=Playfair+Display:ital,wght@1,700&family=Press+Start+2P&family=Protest+Revolution&family=Yellowtail&display=swap" rel="stylesheet">
+
+<!-- FFmpeg WASM: se carga dinamicamente (local primero, CDN con CORS como respaldo).
+     NO usar <script src> directo al CDN: con COEP require-corp el navegador lo bloquea
+     (ERR_BLOCKED_BY_RESPONSE.NotSameOriginAfterDefaultedToSameOriginByCoep). -->
+
+<style>
+  :root {
+    --bg-main: #0d1117;
+    --bg-card: #161b22;
+    --bg-input: #0d1117;
+    --bg-raised: #21262d;
+    --border: #30363d;
+    --border-accent: #3fb950;
+    
+    --text-primary: #f0f6fc;
+    --text-secondary: #8b949e;
+    --text-muted: #6e7681;
+    
+    --accent-purple: #8a5cf6;
+    --accent-blue: #38bdf8;
+    --accent-indigo: #6366f1;
+    --accent-green: #3fb950;
+    --accent-red: #f85149;
+    --accent-orange: #f0883e;
+    
+    --r-lg: 16px;
+    --r-md: 10px;
+    --r-sm: 6px;
+    
+    --shadow: 0 10px 30px -10px rgba(0,0,0,0.5);
+  }
+
+  body.light-mode {
+    --bg-main: #f6f8fa;
+    --bg-card: #ffffff;
+    --bg-input: #ffffff;
+    --bg-raised: #f3f4f6;
+    --border: #d0d7de;
+    --border-accent: #2da44e;
+
+    --text-primary: #1f2328;
+    --text-secondary: #656d76;
+    --text-muted: #8c959f;
+
+    --shadow: 0 10px 30px -10px rgba(0,0,0,0.1);
+  }
+
+  * { box-sizing: border-box; }
+  
+  body {
+    margin: 0;
+    background-color: var(--bg-main);
+    color: var(--text-primary);
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    transition: background-color 0.3s ease, color 0.3s ease;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 18px 32px;
+    background: rgba(22, 27, 34, 0.8);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  body.light-mode header {
+    background: rgba(255, 255, 255, 0.8);
+  }
+
+  header h1 {
+    font-size: 20px;
+    font-weight: 800;
+    margin: 0;
+    background: linear-gradient(135deg, #a855f7, #3b82f6);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    letter-spacing: -0.5px;
+    white-space: nowrap;
+  }
+
+  /* --- Desplegable para Nuevos Usuarios en el Header --- */
+  .guide-dropdown-wrapper {
+    position: relative;
+    max-width: 480px;
+    width: 100%;
+    margin: 0 16px;
+  }
+
+  .guide-btn {
+    width: 100%;
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    padding: 8px 14px;
+    border-radius: var(--r-md);
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    transition: all 0.2s ease;
+  }
+
+  .guide-btn:hover {
+    border-color: var(--accent-blue);
+    background: var(--bg-card);
+  }
+
+  .guide-content {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 0;
+    right: 0;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    padding: 16px;
+    box-shadow: 0 12px 32px rgba(0,0,0,0.6);
+    display: none;
+    flex-direction: column;
+    gap: 12px;
+    z-index: 110;
+  }
+
+  .guide-content.active {
+    display: flex;
+  }
+
+  .guide-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    font-size: 12.5px;
+    color: var(--text-secondary);
+  }
+
+  .guide-item strong {
+    color: var(--text-primary);
+    display: block;
+    margin-bottom: 2px;
+  }
+
+  .guide-icon {
+    font-size: 16px;
+    background: var(--bg-raised);
+    padding: 6px;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--border);
+  }
+
+  .header-badges {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    white-space: nowrap;
+  }
+
+  .theme-toggle-btn {
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    padding: 6px 12px;
+    border-radius: var(--r-md);
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.2s ease;
+  }
+
+  .theme-toggle-btn:hover {
+    background: var(--border);
+  }
+
+  main {
+    display: grid;
+    grid-template-columns: minmax(360px, 480px) 1fr;
+    gap: 28px;
+    padding: 28px;
+    max-width: 1280px;
+    margin: 0 auto;
+  }
+
+  @media (max-width: 900px) {
+    main {
+      grid-template-columns: 1fr;
+    }
+    header {
+      flex-wrap: wrap;
+    }
+    .guide-dropdown-wrapper {
+      order: 3;
+      margin: 10px 0 0 0;
+      max-width: 100%;
+    }
+  }
+
+  section {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    padding: 24px;
+    box-shadow: var(--shadow);
+  }
+
+  h2 {
+    font-size: 16px;
+    font-weight: 700;
+    margin: 0 0 18px;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin: 16px 0 6px;
+  }
+
+  input[type=text],
+  input[type=number],
+  select,
+  textarea {
+    width: 100%;
+    padding: 12px 14px;
+    background: var(--bg-input);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    font-size: 14px;
+    outline: none;
+    transition: all 0.2s ease;
+  }
+
+  input[type=text]:focus,
+  input[type=number]:focus,
+  select:focus,
+  textarea:focus {
+    border-color: var(--accent-blue);
+    box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.15);
+  }
+
+  input[type=file] {
+    width: 100%;
+    padding: 12px;
+    background: var(--bg-input);
+    color: var(--text-secondary);
+    border: 2px dashed var(--border);
+    border-radius: var(--r-md);
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  input[type=file]:hover {
+    border-color: var(--accent-blue);
+    background: rgba(56, 189, 248, 0.02);
+  }
+
+  input[type=range] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 6px;
+    background: var(--bg-raised);
+    border-radius: 4px;
+    outline: none;
+    margin: 8px 0;
+  }
+
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--accent-blue);
+    cursor: pointer;
+    box-shadow: 0 0 10px rgba(56, 189, 248, 0.5);
+    transition: transform 0.1s ease;
+  }
+
+  input[type=range]::-webkit-slider-thumb:hover {
+    transform: scale(1.15);
+  }
+
+  textarea {
+    resize: vertical;
+    min-height: 110px;
+    font-family: inherit;
+    line-height: 1.6;
+  }
+
+  .row {
+    display: flex;
+    gap: 14px;
+  }
+  
+  .row > * {
+    flex: 1;
+  }
+
+  button {
+    min-height: 46px;
+    padding: 0 20px;
+    border-radius: var(--r-md);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: var(--bg-raised);
+    color: var(--text-primary);
+    transition: all 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  button:hover:not(:disabled) {
+    background: var(--border);
+  }
+
+  button.primary {
+    background: linear-gradient(135deg, var(--accent-indigo), var(--accent-purple));
+    border: none;
+    color: #ffffff;
+    font-weight: 700;
+    box-shadow: 0 4px 14px rgba(99, 102, 241, 0.35);
+  }
+
+  button.primary:hover:not(:disabled) {
+    opacity: 0.95;
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(99, 102, 241, 0.45);
+  }
+
+  button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    filter: grayscale(0.8);
+  }
+
+  .color-picker-wrapper {
+    position: relative;
+    width: 100%;
+  }
+
+  .color-picker-btn {
+    width: 100%;
+    min-height: 46px;
+    padding: 0 14px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    color: var(--text-primary);
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+  }
+
+  .color-picker-btn:hover {
+    border-color: var(--accent-blue);
+  }
+
+  .color-preview-box {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .color-swatch-current {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .color-swatch-current.none-bg::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: -20%;
+    width: 140%;
+    height: 2px;
+    background: #f85149;
+    transform: rotate(-45deg);
+  }
+
+  .color-dropdown {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 0;
+    width: 100%;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    padding: 12px;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+    z-index: 50;
+    display: none;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .color-dropdown.active {
+    display: flex;
+  }
+
+  .color-palette-grid {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    gap: 6px;
+  }
+
+  .color-dot-btn {
+    width: 100%;
+    aspect-ratio: 1;
+    min-height: auto;
+    padding: 0;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    cursor: pointer;
+    transition: transform 0.15s ease, border-color 0.15s ease;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .color-dot-btn:hover {
+    transform: scale(1.2);
+  }
+
+  .color-dot-btn.selected {
+    border-color: var(--accent-blue);
+    transform: scale(1.1);
+  }
+
+  .color-dot-btn.none-btn {
+    background: var(--bg-raised) !important;
+  }
+
+  .color-dot-btn.none-btn::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: -20%;
+    width: 140%;
+    height: 2px;
+    background: #f85149;
+    transform: rotate(-45deg);
+  }
+
+  .custom-color-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
+  .native-color-input {
+    -webkit-appearance: none;
+    appearance: none;
+    border: none;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    cursor: pointer;
+    background: transparent;
+  }
+
+  .native-color-input::-webkit-color-swatch-wrapper {
+    padding: 0;
+  }
+
+  .native-color-input::-webkit-color-swatch {
+    border: 1px solid var(--border);
+    border-radius: 50%;
+  }
+
+  .actions {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-top: 20px;
+  }
+
+  .status-box {
+    margin-top: 16px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--bg-input);
+    padding: 16px;
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+
+  .progress-bar {
+    width: 100%;
+    height: 8px;
+    background: var(--bg-raised);
+    border-radius: 999px;
+    margin-top: 12px;
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple));
+    border-radius: 999px;
+    transition: width 0.2s ease-out;
+  }
+
+  .text-box-container {
+    margin-top: 20px;
+    border-top: 1px solid var(--border);
+    padding-top: 16px;
+  }
+
+  .preview-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 520px;
+    background: #000000;
+    border-radius: var(--r-md);
+    padding: 20px;
+    border: 1px solid var(--border);
+  }
+
+  canvas {
+    width: 280px;
+    height: 497px;
+    background: #000;
+    border-radius: 12px;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.8);
+    display: block;
+  }
+
+  a.dl {
+    display: block;
+    text-align: center;
+    margin-top: 16px;
+    padding: 14px;
+    background: rgba(63, 185, 80, 0.1);
+    border: 1px solid rgba(63, 185, 80, 0.3);
+    border-radius: var(--r-md);
+    color: #4ade80;
+    font-weight: 700;
+    font-size: 15px;
+    text-decoration: none;
+    transition: all 0.2s ease;
+  }
+
+  a.dl:hover {
+    background: rgba(63, 185, 80, 0.2);
+    transform: translateY(-1px);
+  }
+
+  .checkbox-group {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    padding: 14px;
+    border-radius: var(--r-md);
+    margin-top: 14px;
+  }
+
+  .checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    user-select: none;
+    color: var(--text-primary);
+    font-size: 13.5px;
+    font-weight: 500;
+  }
+
+  .checkbox-label input {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--accent-indigo);
+    cursor: pointer;
+  }
+
+  .sub-info {
+    font-size: 12px;
+    color: var(--accent-orange);
+    margin-top: 6px;
+    display: block;
+    font-weight: 500;
+  }
+
+  /* Clases CSS de las fuentes estilo TikTok */
+  .font-classic { font-family: 'Montserrat', sans-serif; font-weight: 900; }
+  .font-elegance { font-family: 'Playfair Display', serif; font-style: italic; font-weight: 700; }
+  .font-neon { font-family: 'Caveat', cursive; font-weight: 700; }
+  .font-retro { font-family: 'Playfair Display', serif; font-weight: 900; }
+  .font-comic { font-family: 'Comic Neue', cursive; font-weight: 700; font-style: italic; }
+  .font-tallhaus { font-family: 'Oswald', sans-serif; font-weight: 700; text-transform: uppercase; }
+  .font-vintage { font-family: 'Protest Revolution', sans-serif; }
+  .font-printer, .font-typewriter { font-family: 'Courier Prime', monospace; font-weight: 700; }
+  .font-lyrical, .font-signature { font-family: 'Yellowtail', cursive; }
+  .font-icecube { font-family: 'Press Start 2P', monospace; font-size: 0.8em; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Editor de Shorts v13.3</h1>
+  
+  <!-- Desplegable para Nuevos Usuarios -->
+  <div class="guide-dropdown-wrapper">
+    <button id="guideBtn" class="guide-btn" type="button">
+      <span>🚀 Guía rápida / Opciones para usuarios nuevos</span>
+      <span id="guideArrow" style="font-size:10px; color:var(--text-muted)">▼</span>
+    </button>
+    <div id="guideContent" class="guide-content">
+      <div class="guide-item">
+        <span class="guide-icon">🎬</span>
+        <div>
+          <strong>1. Carga de Video y Formato</strong>
+          Sube tu video base, aplícale modo espejo o siléncialo si vas a superponer voz o audio externo.
+        </div>
+      </div>
+      <div class="guide-item">
+        <span class="guide-icon">⚡</span>
+        <div>
+          <strong>2. Ajuste Fijo a 20s o Velocidad Personalizada</strong>
+          Optimiza la retención adaptando la duración total automáticamente o ajustando el control de velocidad.
+        </div>
+      </div>
+      <div class="guide-item">
+        <span class="guide-icon">💬</span>
+        <div>
+          <strong>3. Subtítulos dinámicos y Emojis Automáticos</strong>
+          Escribe una frase por línea en el área de texto. El editor intercalará cada frase según el intervalo configurado e insertará emojis según las palabras clave.
+        </div>
+      </div>
+      <div class="guide-item">
+        <span class="guide-icon">🎨</span>
+        <div>
+          <strong>4. Estilos y Colores Personalizados</strong>
+          Selecciona tipografías estilo TikTok (Classic, Neon, Vintage) y paletas de colores o fondos destacados para maximizar la legibilidad.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="header-badges">
+    <button id="themeToggle" class="theme-toggle-btn" type="button">🌙 Modo Oscuro</button>
+  </div>
+</header>
+
+<main>
+  <section>
+    <h2>1 · Video y configuración</h2>
+    <label>Archivo de video</label>
+    <input id="file" type="file" accept="video/*" />
+
+    <div class="checkbox-group">
+      <label class="checkbox-label">
+        <input type="checkbox" id="chkMirror" /> 🪞 Voltear video en espejo (Horizontal)
+      </label>
+      <label class="checkbox-label" style="margin-top:10px;">
+        <input type="checkbox" id="chkMute" /> 🔇 Silenciar video (Eliminar audio)
+      </label>
+    </div>
+
+    <div class="checkbox-group">
+      <label class="checkbox-label">
+        <input type="checkbox" id="chkAuto20s" /> ⚡ Ajustar automáticamente a 20 segundos
+      </label>
+      
+      <div id="speedSliderBox" style="margin-top:10px;">
+        <label>Acelerar / Ralentizar: <span id="valSpeed" style="color:var(--accent-blue)">1.0x</span></label>
+        <input id="speedRange" type="range" min="0.5" max="4.0" step="0.1" value="1.0" />
+        <span id="durEstimate" class="sub-info">Carga un video para ver la duración final.</span>
+      </div>
+    </div>
+
+    <label>Tamaño de texto: <span id="valFontSize" style="color:var(--accent-blue)">47 px</span></label>
+    <input id="fontSize" type="range" min="20" max="250" value="47" />
+
+    <label>Posición vertical: <span id="valPos" style="color:var(--accent-blue)">11 %</span></label>
+    <input id="posY" type="range" min="10" max="90" value="11" />
+
+    <div class="row">
+      <div>
+        <label>Estilo / Fuente</label>
+        <select id="fontFamily">
+          <option value="Montserrat" selected>Classic</option>
+          <option value="'Playfair Display'">Elegance</option>
+          <option value="Caveat">Neon</option>
+          <option value="'Playfair Display'">Retro</option>
+          <option value="'Comic Neue'">Comic Sans</option>
+          <option value="Oswald">TALLHAUS</option>
+          <option value="'Protest Revolution'">Vintage</option>
+          <option value="'Courier Prime'">Typewriter</option>
+          <option value="Yellowtail">Lyrical</option>
+          <option value="'Press Start 2P'">Ice Cube</option>
+        </select>
+      </div>
+      <div>
+        <label>Seg / Línea</label>
+        <input id="segLen" type="number" value="5" min="1" />
+      </div>
+    </div>
+
+    <div class="row" style="margin-top: 10px;">
+      <div>
+        <label>Color de texto</label>
+        <input id="color" type="hidden" value="#FFFFFF" />
+        
+        <div class="color-picker-wrapper">
+          <button type="button" id="colorPickerBtn" class="color-picker-btn">
+            <div class="color-preview-box">
+              <span id="colorSwatch" class="color-swatch-current" style="background-color: #FFFFFF;"></span>
+              <span id="colorName">Blanco</span>
+            </div>
+            <span style="font-size:10px; color:var(--text-muted)">▼</span>
+          </button>
+
+          <div id="colorDropdown" class="color-dropdown">
+            <div class="color-palette-grid">
+              <button type="button" class="color-dot-btn selected" style="background: #FFFFFF;" data-color="#FFFFFF" data-name="Blanco" title="Blanco"></button>
+              <button type="button" class="color-dot-btn" style="background: #000000;" data-color="#000000" data-name="Negro" title="Negro"></button>
+              <button type="button" class="color-dot-btn" style="background: #FFE600;" data-color="#FFE600" data-name="Amarillo" title="Amarillo"></button>
+              <button type="button" class="color-dot-btn" style="background: #3fb950;" data-color="#3fb950" data-name="Verde" title="Verde"></button>
+              <button type="button" class="color-dot-btn" style="background: #38bdf8;" data-color="#38bdf8" data-name="Cian" title="Cian"></button>
+              <button type="button" class="color-dot-btn" style="background: #f43f5e;" data-color="#f43f5e" data-name="Magenta" title="Magenta"></button>
+              <button type="button" class="color-dot-btn" style="background: #f85149;" data-color="#f85149" data-name="Rojo" title="Rojo"></button>
+              <button type="button" class="color-dot-btn" style="background: #f0883e;" data-color="#f0883e" data-name="Naranja" title="Naranja"></button>
+            </div>
+            <div class="custom-color-row">
+              <span>Personalizado:</span>
+              <input type="color" id="nativeColorInput" class="native-color-input" value="#FFFFFF" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <label>Color de Fondo</label>
+        <input id="bgColor" type="hidden" value="#000000" />
+        
+        <div class="color-picker-wrapper">
+          <button type="button" id="bgColorPickerBtn" class="color-picker-btn">
+            <div class="color-preview-box">
+              <span id="bgColorSwatch" class="color-swatch-current" style="background-color: #000000;"></span>
+              <span id="bgColorName">Fondo Negro</span>
+            </div>
+            <span style="font-size:10px; color:var(--text-muted)">▼</span>
+          </button>
+
+          <div id="bgColorDropdown" class="color-dropdown">
+            <div class="color-palette-grid">
+              <button type="button" class="color-dot-btn none-btn" data-color="none" data-name="Sin fondo" title="Sin fondo"></button>
+              <button type="button" class="color-dot-btn selected" style="background: #000000;" data-color="#000000" data-name="Fondo Negro" title="Negro"></button>
+              <button type="button" class="color-dot-btn" style="background: #FFFFFF;" data-color="#FFFFFF" data-name="Fondo Blanco" title="Blanco"></button>
+              <button type="button" class="color-dot-btn" style="background: #FF0000;" data-color="#FF0000" data-name="Fondo Rojo" title="Rojo"></button>
+              <button type="button" class="color-dot-btn" style="background: #38bdf8;" data-color="#38bdf8" data-name="Fondo Azul" title="Azul"></button>
+              <button type="button" class="color-dot-btn" style="background: #FFE600;" data-color="#FFE600" data-name="Fondo Amarillo" title="Amarillo"></button>
+              <button type="button" class="color-dot-btn" style="background: #3fb950;" data-color="#3fb950" data-name="Fondo Verde" title="Verde"></button>
+              <button type="button" class="color-dot-btn" style="background: #8a5cf6;" data-color="#8a5cf6" data-name="Fondo Púrpura" title="Púrpura"></button>
+            </div>
+            <div class="custom-color-row">
+              <span>Personalizado:</span>
+              <input type="color" id="bgNativeColorInput" class="native-color-input" value="#000000" />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button id="btnLoad" class="primary" onclick="initFFmpeg()">Iniciar Motor MP4</button>
+      <button id="btnRender" disabled onclick="exportVideoToMP4()">Exportar Video MP4</button>
+    </div>
+
+    <div id="statusBox" class="status-box">
+      <span id="statusText">Presiona «Iniciar Motor MP4» para comenzar.</span>
+      <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
+    </div>
+    
+    <a id="dl" class="dl" hidden download="short_v13.mp4">📥 Descargar MP4 Final</a>
+
+    <div class="text-box-container">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <label style="margin:0;">Texto del video (una frase por línea):</label>
+        <label class="checkbox-label">
+          <input type="checkbox" id="autoEmoji" checked /> Emojis automáticos
+        </label>
+      </div>
+      <textarea id="subtitles" placeholder="Frase 1&#10;Frase 2&#10;Frase 3">Si mereces un método simple que disipe todas tus dudas</textarea>
+    </div>
+  </section>
+
+  <section>
+    <h2>2 · Vista previa</h2>
+    <div class="preview-container">
+      <canvas id="cv" width="1080" height="1920"></canvas>
+    </div>
+  </section>
+</main>
+
+<video id="vid" playsinline muted loop hidden></video>
+
+<script>
+  const $ = id => document.getElementById(id);
+  const statusText = $("statusText");
+  const progressFill = $("progressFill");
+
+  function setStatus(msg, progress = null) {
+    statusText.textContent = msg;
+    if (progress !== null) {
+      const p = Math.min(100, Math.max(0, Math.round(progress)));
+      progressFill.style.width = p + "%";
+    }
+  }
+
+  // Lógica del Desplegable de Guía
+  const guideBtn = $("guideBtn");
+  const guideContent = $("guideContent");
+  const guideArrow = $("guideArrow");
+
+  guideBtn.onclick = (e) => {
+    e.stopPropagation();
+    const isExpanded = guideContent.classList.toggle("active");
+    guideArrow.textContent = isExpanded ? "▲" : "▼";
+  };
+
+  const emojiMap = {
+    "manzana": "🍎", "manzanas": "🍎", "platano": "🍌", "plátano": "🍌", "banana": "🍌",
+    "fresa": "🍓", "fresas": "🍓", "limon": "🍋", "limón": "🍋", "naranja": "🍊", 
+    "tomate": "🍅", "tomates": "🍅", "zanahoria": "🥕", "lechuga": "🥗",
+    "carne": "🥩", "pollo": "🍗", "pescado": "🐟", "huevo": "🥚", "queso": "🧀",
+    "pizza": "🍕", "pan": "🍞", "fuego": "🔥", "receta": "👨‍🍳", "recetas": "👨‍🍳", "rico": "😋"
+  };
+
+  function processTextWithEmojis(text) {
+    if (!$("autoEmoji").checked) return text;
+    let words = text.split(" ");
+    let processed = words.map(w => {
+      let clean = w.toLowerCase().replace(/[^\wáéíóúñ]/gi, '');
+      if (emojiMap[clean] && !w.includes(emojiMap[clean])) {
+        return w + " " + emojiMap[clean];
+      }
+      return w;
+    });
+    return processed.join(" ");
+  }
+
+  function getWrappedLines(context, text, maxWidth) {
+    const words = text.split(' ');
+    const lines = [];
+    let currentLine = words[0] || '';
+
+    for (let i = 1; i < words.length; i++) {
+      const word = words[i];
+      const width = context.measureText(currentLine + " " + word).width;
+      if (width < maxWidth) {
+        currentLine += " " + word;
+      } else {
+        lines.push(currentLine);
+        currentLine = word;
+      }
+    }
+    if (currentLine) lines.push(currentLine);
+    return lines;
+  }
+
+  const cv = $("cv"), ctx = cv ? cv.getContext("2d") : null, vid = $("vid");
+  let hasVideo = false;
+  let isRendering = false;
+
+  function updateDurEstimate() {
+    if (!hasVideo || !vid.duration) return;
+    const dur = vid.duration;
+    
+    if ($("chkAuto20s").checked) {
+      const factor = dur / 20;
+      $("durEstimate").textContent = `Duración fija: 20 seg (Velocidad aprox: x${factor.toFixed(2)})`;
+      $("speedRange").disabled = true;
+    } else {
+      $("speedRange").disabled = false;
+      const speed = parseFloat($("speedRange").value);
+      const newDur = dur / speed;
+      $("durEstimate").textContent = `Duración estimada: ${newDur.toFixed(1)} seg (Velocidad: x${speed})`;
+    }
+  }
+
+  function drawFrameToCanvas(canvasTarget, contextTarget, currentTime) {
+    contextTarget.save();
+    contextTarget.fillStyle = "#000"; 
+    contextTarget.fillRect(0, 0, canvasTarget.width, canvasTarget.height);
+    
+    if (hasVideo && vid.readyState >= 2) {
+      const s = Math.max(canvasTarget.width / vid.videoWidth, canvasTarget.height / vid.videoHeight);
+      
+      if ($("chkMirror").checked) {
+        contextTarget.translate(canvasTarget.width, 0);
+        contextTarget.scale(-1, 1);
+      }
+
+      contextTarget.drawImage(vid, (canvasTarget.width - vid.videoWidth * s) / 2, (canvasTarget.height - vid.videoHeight * s) / 2, vid.videoWidth * s, vid.videoHeight * s);
+      contextTarget.restore();
+    } else {
+      contextTarget.restore();
+    }
+
+    const textRaw = $("subtitles").value || "";
+    const rawLines = textRaw.split("\n").filter(l => l.trim() !== "");
+    
+    if (rawLines.length > 0) {
+      const segLen = parseFloat($("segLen").value) || 5;
+      const lineIndex = Math.min(Math.floor(currentTime / segLen), rawLines.length - 1);
+      const currentLineText = rawLines[lineIndex >= 0 ? lineIndex : 0];
+
+      const fontSize = parseInt($("fontSize").value) || 47;
+      const selectedFont = $("fontFamily").value;
+      
+      contextTarget.font = `bold ${fontSize}px ${selectedFont}, sans-serif`; 
+      contextTarget.textAlign = "center";
+      
+      const posPercent = parseInt($("posY").value) / 100;
+      const yBase = canvasTarget.height * posPercent;
+      
+      const textWithEmojis = processTextWithEmojis(currentLineText);
+      
+      const maxTextWidth = canvasTarget.width - 160; 
+      const wrappedLines = getWrappedLines(contextTarget, textWithEmojis, maxTextWidth);
+      
+      const lineHeight = fontSize * 1.25;
+      const totalBlockHeight = wrappedLines.length * lineHeight;
+
+      const bgVal = $("bgColor").value;
+      if (bgVal !== "none") {
+        let maxLineWidth = 0;
+        wrappedLines.forEach(l => {
+          const w = contextTarget.measureText(l).width;
+          if (w > maxLineWidth) maxLineWidth = w;
+        });
+
+        const padX = 24, padY = 16;
+        const bgWidth = maxLineWidth + (padX * 2);
+        const bgHeight = totalBlockHeight + padY;
+        
+        contextTarget.fillStyle = bgVal;
+        contextTarget.fillRect(
+          (canvasTarget.width - bgWidth) / 2, 
+          yBase - fontSize + (padY / 4), 
+          bgWidth, 
+          bgHeight
+        );
+      }
+
+      contextTarget.fillStyle = $("color").value || "#FFFFFF";
+      wrappedLines.forEach((line, idx) => {
+        const lineY = yBase + (idx * lineHeight);
+        contextTarget.fillText(line, canvasTarget.width / 2, lineY);
+      });
+    }
+  }
+
+  function renderLoop() {
+    if (ctx && vid && !isRendering) {
+      drawFrameToCanvas(cv, ctx, vid.currentTime || 0);
+    }
+    requestAnimationFrame(renderLoop);
+  }
+  requestAnimationFrame(renderLoop);
+
+  // Selector de Color de Texto
+  const colorPickerBtn = $("colorPickerBtn");
+  const colorDropdown = $("colorDropdown");
+  const colorSwatch = $("colorSwatch");
+  const colorName = $("colorName");
+  const hiddenColorInput = $("color");
+  const nativeColorInput = $("nativeColorInput");
+  const dotBtns = colorDropdown.querySelectorAll(".color-dot-btn");
+
+  colorPickerBtn.onclick = (e) => {
+    e.stopPropagation();
+    bgColorDropdown.classList.remove("active");
+    colorDropdown.classList.toggle("active");
+  };
+
+  function updateTextColor(colorHex, name = "Personalizado") {
+    hiddenColorInput.value = colorHex;
+    colorSwatch.style.backgroundColor = colorHex;
+    colorName.textContent = name;
+    if(colorHex !== "none") nativeColorInput.value = colorHex;
+  }
+
+  dotBtns.forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      dotBtns.forEach(b => b.classList.remove("selected"));
+      btn.classList.add("selected");
+      
+      const selectedColor = btn.getAttribute("data-color");
+      const name = btn.getAttribute("data-name");
+      updateTextColor(selectedColor, name);
+      colorDropdown.classList.remove("active");
+    };
+  });
+
+  nativeColorInput.oninput = (e) => {
+    dotBtns.forEach(b => b.classList.remove("selected"));
+    updateTextColor(e.target.value, "Personalizado");
+  };
+
+  // Selector de Color de Fondo
+  const bgColorPickerBtn = $("bgColorPickerBtn");
+  const bgColorDropdown = $("bgColorDropdown");
+  const bgColorSwatch = $("bgColorSwatch");
+  const bgColorName = $("bgColorName");
+  const hiddenBgColorInput = $("bgColor");
+  const bgNativeColorInput = $("bgNativeColorInput");
+  const bgDotBtns = bgColorDropdown.querySelectorAll(".color-dot-btn");
+
+  bgColorPickerBtn.onclick = (e) => {
+    e.stopPropagation();
+    colorDropdown.classList.remove("active");
+    bgColorDropdown.classList.toggle("active");
+  };
+
+  function updateBgColor(colorHex, name = "Personalizado") {
+    hiddenBgColorInput.value = colorHex;
+    bgColorName.textContent = name;
+    
+    if (colorHex === "none") {
+      bgColorSwatch.style.backgroundColor = "transparent";
+      bgColorSwatch.classList.add("none-bg");
+    } else {
+      bgColorSwatch.classList.remove("none-bg");
+      bgColorSwatch.style.backgroundColor = colorHex;
+      bgNativeColorInput.value = colorHex;
+    }
+  }
+
+  bgDotBtns.forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      bgDotBtns.forEach(b => b.classList.remove("selected"));
+      btn.classList.add("selected");
+      
+      const selectedColor = btn.getAttribute("data-color");
+      const name = btn.getAttribute("data-name");
+      updateBgColor(selectedColor, name);
+      bgColorDropdown.classList.remove("active");
+    };
+  });
+
+  bgNativeColorInput.oninput = (e) => {
+    bgDotBtns.forEach(b => b.classList.remove("selected"));
+    updateBgColor(e.target.value, "Personalizado");
+  };
+
+  document.onclick = (e) => {
+    if (!colorDropdown.contains(e.target) && !colorPickerBtn.contains(e.target)) {
+      colorDropdown.classList.remove("active");
+    }
+    if (!bgColorDropdown.contains(e.target) && !bgColorPickerBtn.contains(e.target)) {
+      bgColorDropdown.classList.remove("active");
+    }
+    if (!guideContent.contains(e.target) && !guideBtn.contains(e.target)) {
+      guideContent.classList.remove("active");
+      guideArrow.textContent = "▼";
+    }
+  };
+
+  // Tema Oscuro / Claro
+  const themeToggleBtn = $("themeToggle");
+  const savedTheme = localStorage.getItem("theme");
+  if (savedTheme === "light") {
+    document.body.classList.add("light-mode");
+    themeToggleBtn.textContent = "☀️ Modo Claro";
+  }
+
+  themeToggleBtn.onclick = () => {
+    document.body.classList.toggle("light-mode");
+    const isLight = document.body.classList.contains("light-mode");
+    themeToggleBtn.textContent = isLight ? "☀️ Modo Claro" : "🌙 Modo Oscuro";
+    localStorage.setItem("theme", isLight ? "light" : "dark");
+  };
+
+  $("fontSize").oninput = e => $("valFontSize").textContent = e.target.value + " px";
+  $("posY").oninput = e => $("valPos").textContent = e.target.value + " %";
+  $("speedRange").oninput = e => {
+    $("valSpeed").textContent = e.target.value + "x";
+    updateDurEstimate();
+  };
+  $("chkAuto20s").onchange = updateDurEstimate;
+
+  $("file").onchange = e => {
+    const f = e.target.files[0];
+    if (f) {
+      vid.src = URL.createObjectURL(f);
+      vid.onloadedmetadata = () => {
+        hasVideo = true;
+        updateDurEstimate();
+      };
+      vid.play();
+    }
+  };
+
+  // ======= Logica FFmpeg (v13.3 - corregida) =======
+  let ffmpeg = null;
+  let engineLoading = false;
+
+  // Rutas locales (archivos que ya estan en el deploy de Vercel) y respaldo CDN
+  const LOCAL = {
+    lib:    "./ffmpeg.js",
+    worker: "./814.ffmpeg.js",
+    core:   "./ffmpeg-core.js",
+    wasm:   "./ffmpeg-core.wasm"
+  };
+  const CDN = {
+    lib:    "https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.umd.js",
+    worker: "https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/814.ffmpeg.js",
+    core:   "https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js",
+    wasm:   "https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm"
+  };
+
+  function loadScript(src) {
+    return new Promise((resolve, reject) => {
+      const sc = document.createElement("script");
+      sc.src = src;
+      sc.crossOrigin = "anonymous"; // obligatorio bajo COEP require-corp
+      sc.onload = () => resolve(src);
+      sc.onerror = () => reject(new Error("No se pudo cargar " + src));
+      document.head.appendChild(sc);
+    });
+  }
+
+  // Descarga un recurso y lo convierte en blob: URL (evita bloqueos COEP/CORS del worker y del wasm)
+  async function toBlobURL(url, mime) {
+    const res = await fetch(url, { mode: "cors", credentials: "omit" });
+    if (!res.ok) throw new Error("HTTP " + res.status + " en " + url);
+    const buf = await res.arrayBuffer();
+    return URL.createObjectURL(new Blob([buf], { type: mime }));
+  }
+
+  async function firstBlobURL(urls, mime) {
+    let lastErr = null;
+    for (const u of urls) {
+      try { return await toBlobURL(u, mime); } catch (e) { lastErr = e; }
+    }
+    throw lastErr || new Error("Recurso no disponible");
+  }
+
+  function getFFmpegClass() {
+    // OJO: no declarar "const { FFmpeg }" y ademas usar "typeof FFmpeg" en el mismo scope:
+    // eso provocaba el error "Cannot access 'FFmpeg' before initialization" (TDZ).
+    if (window.FFmpegWASM && window.FFmpegWASM.FFmpeg) return window.FFmpegWASM.FFmpeg;
+    if (window.FFmpeg && typeof window.FFmpeg === "function") return window.FFmpeg;
+    if (window.FFmpeg && window.FFmpeg.FFmpeg) return window.FFmpeg.FFmpeg;
+    return null;
+  }
+
+  async function initFFmpeg() {
+    if (engineLoading) return;
+    engineLoading = true;
+    $("btnLoad").disabled = true;
+    setStatus("Cargando motor MP4...", 10);
+
+    try {
+      // a) Libreria principal: local primero, CDN despues
+      if (!getFFmpegClass()) {
+        try { await loadScript(LOCAL.lib); } catch (e) { /* sin copia local */ }
+      }
+      if (!getFFmpegClass()) {
+        await loadScript(CDN.lib);
+      }
+      const FFmpegClass = getFFmpegClass();
+      if (!FFmpegClass) throw new Error("Libreria FFmpeg no cargada correctamente.");
+
+      ffmpeg = new FFmpegClass();
+      ffmpeg.on("progress", ({ progress }) => {
+        const pct = Math.round(progress * 100);
+        if (pct > 0 && pct <= 100) setStatus(`⚙️ Generando MP4 final... ${pct}%`, 70 + pct * 0.3);
+      });
+      ffmpeg.on("log", ({ message }) => { if (window.DEBUG_FFMPEG) console.log(message); });
+
+      setStatus("Descargando nucleo MP4 (~30 MB la primera vez)...", 35);
+      const coreURL = await firstBlobURL([LOCAL.core, CDN.core], "text/javascript");
+      const wasmURL = await firstBlobURL([LOCAL.wasm, CDN.wasm], "application/wasm");
+
+      const cfg = { coreURL, wasmURL };
+      // El worker de @ffmpeg/ffmpeg 0.12.x no puede crearse desde otro origen: lo pasamos como blob
+      try {
+        cfg.classWorkerURL = await firstBlobURL([LOCAL.worker, CDN.worker], "text/javascript");
+      } catch (e) { /* si no existe, el worker por defecto sirve cuando la lib es local */ }
+
+      setStatus("Inicializando motor...", 60);
+      await ffmpeg.load(cfg);
+
+      setStatus("✓ Motor MP4 listo para exportar.", 100);
+      $("btnRender").disabled = false;
+    } catch (err) {
+      ffmpeg = null;
+      $("btnLoad").disabled = false;
+      setStatus("✗ Error al cargar motor: " + (err && err.message ? err.message : String(err)), 0);
+      console.error(err);
+    } finally {
+      engineLoading = false;
+    }
+  }
+  window.initFFmpeg = initFFmpeg;
+
+  function seekVideo(time) {
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        vid.removeEventListener("seeked", finish);
+        clearTimeout(timer);
+        resolve();
+      };
+      // Si el tiempo es practicamente el mismo, 'seeked' puede no dispararse nunca
+      if (Math.abs(vid.currentTime - time) < 0.0005) { requestAnimationFrame(finish); return; }
+      const timer = setTimeout(finish, 2000); // salvavidas anti-cuelgue
+      vid.addEventListener("seeked", finish);
+      try { vid.currentTime = Math.min(time, Math.max(0, (vid.duration || 0) - 0.01)); }
+      catch (e) { finish(); }
+    });
+  }
+
+  async function exportVideoToMP4() {
+    if (!hasVideo) { setStatus("✗ Primero carga un video.", 0); return; }
+    if (!ffmpeg || !ffmpeg.loaded) { setStatus("✗ Presiona primero «Iniciar Motor MP4».", 0); return; }
+
+    $("btnRender").disabled = true;
+    vid.pause();
+    isRendering = true;
+    setStatus("Preparando exportación...", 5);
+
+    try {
+      const offCanvas = document.createElement("canvas");
+      offCanvas.width = 1080;
+      offCanvas.height = 1920;
+      const offCtx = offCanvas.getContext("2d");
+
+      let targetDur = vid.duration;
+      if ($("chkAuto20s").checked) {
+        targetDur = 20;
+      } else {
+        const speed = parseFloat($("speedRange").value);
+        targetDur = vid.duration / speed;
+      }
+
+      const fps = 30;
+      const totalFrames = Math.floor(targetDur * fps);
+      const fileList = [];
+
+      for (let i = 0; i < totalFrames; i++) {
+        const currentTime = (i / totalFrames) * vid.duration;
+        await seekVideo(currentTime);
+        drawFrameToCanvas(offCanvas, offCtx, currentTime);
+
+        const blob = await new Promise(res => offCanvas.toBlob(res, "image/jpeg", 0.85));
+        const arrayBuffer = await blob.arrayBuffer();
+        const frameName = `frame_${String(i).padStart(5, '0')}.jpg`;
+        await ffmpeg.writeFile(frameName, new Uint8Array(arrayBuffer));
+        fileList.push(frameName);
+
+        const progressPct = ((i + 1) / totalFrames) * 60;
+        setStatus(`Capturando fotogramas (${i + 1}/${totalFrames})...`, progressPct);
+      }
+
+      setStatus("Procesando video final...", 70);
+      
+      // H.264 + yuv420p + faststart = MP4 que TikTok/Instagram aceptan sin recodificar
+      const cmd = [
+        '-framerate', `${fps}`,
+        '-i', 'frame_%05d.jpg',
+        '-c:v', 'libx264',
+        '-preset', 'veryfast',
+        '-crf', '23',
+        '-profile:v', 'baseline',
+        '-level', '3.1',
+        '-pix_fmt', 'yuv420p',
+        '-r', `${fps}`,
+        '-movflags', '+faststart',
+        '-an',
+        'output.mp4'
+      ];
+
+      await ffmpeg.exec(cmd);
+
+      const data = await ffmpeg.readFile('output.mp4');
+      const bytes = (data instanceof Uint8Array) ? data : new Uint8Array(data);
+      if (!bytes || bytes.length < 1024) throw new Error("El MP4 salio vacio (revisa la consola).");
+      const videoBlob = new Blob([bytes], { type: 'video/mp4' });
+      const videoUrl = URL.createObjectURL(videoBlob);
+
+      const dlLink = $("dl");
+      if (dlLink.dataset.prevUrl) URL.revokeObjectURL(dlLink.dataset.prevUrl);
+      dlLink.dataset.prevUrl = videoUrl;
+      dlLink.href = videoUrl;
+      dlLink.download = "short_" + Date.now() + ".mp4";
+      dlLink.hidden = false;
+
+      // Limpieza de memoria en FFmpeg
+      for (const f of fileList) {
+        try { await ffmpeg.deleteFile(f); } catch(e) {}
+      }
+      try { await ffmpeg.deleteFile('output.mp4'); } catch(e) {}
+
+      setStatus("🎉 ¡Video exportado con éxito!", 100);
+    } catch (error) {
+      console.error(error);
+      setStatus("✗ Error al exportar: " + (error && error.message ? error.message : String(error)), 0);
+    } finally {
+      isRendering = false;
+      $("btnRender").disabled = false;
+    }
+  }
+  window.exportVideoToMP4 = exportVideoToMP4;
+</script>
+</body>
+</html>
