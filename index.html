@@ -2,15 +2,17 @@
 <html lang="es">
 <head>
 <meta charset="utf-8" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8E%AC%3C/text%3E%3C/svg%3E">
+
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Editor de Shorts v13.3</title>
+<title>Editor de Shorts v13.4</title>
 
 <!-- 1. Google Fonts Integradas -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@700&family=Comic+Neue:ital,wght@1,700&family=Courier+Prime:ital,wght@1,700&family=Inter:wght@400;500;600;700;800&family=Montserrat:wght@800;900&family=Oswald:wght@700&family=Playfair+Display:ital,wght@1,700&family=Press+Start+2P&family=Protest+Revolution&family=Yellowtail&display=swap" rel="stylesheet">
 
-<!-- FFmpeg WASM: se carga dinamicamente (local primero, CDN con CORS como respaldo).
+<!-- FFmpeg WASM: se descarga por fetch() y se ejecuta desde blob: (mismo origen).
      NO usar <script src> directo al CDN: con COEP require-corp el navegador lo bloquea
      (ERR_BLOCKED_BY_RESPONSE.NotSameOriginAfterDefaultedToSameOriginByCoep). -->
 
@@ -643,7 +645,7 @@
 <body>
 
 <header>
-  <h1>Editor de Shorts v13.3</h1>
+  <h1>Editor de Shorts v13.4</h1>
   
   <!-- Desplegable para Nuevos Usuarios -->
   <div class="guide-dropdown-wrapper">
@@ -1142,49 +1144,74 @@
     }
   };
 
-  // ======= Logica FFmpeg (v13.3 - corregida) =======
+  // ======= Logica FFmpeg (v13.4 - corregida) =======
   let ffmpeg = null;
   let engineLoading = false;
 
-  // Rutas locales (archivos que ya estan en el deploy de Vercel) y respaldo CDN
-  const LOCAL = {
-    lib:    "./ffmpeg.js",
-    worker: "./814.ffmpeg.js",
-    core:   "./ffmpeg-core.js",
-    wasm:   "./ffmpeg-core.wasm"
-  };
-  const CDN = {
-    lib:    "https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.umd.js",
-    worker: "https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/814.ffmpeg.js",
-    core:   "https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js",
-    wasm:   "https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm"
+  // Rutas locales (si estan en el deploy) + respaldos CDN (unpkg y jsDelivr)
+  const SOURCES = {
+    lib: [
+      "./ffmpeg.js",
+      "./ffmpeg.umd.js",
+      "https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js",
+      "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"
+    ],
+    worker: [
+      "./814.ffmpeg.js",
+      "https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/814.ffmpeg.js",
+      "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/814.ffmpeg.js"
+    ],
+    core: [
+      "./ffmpeg-core.js",
+      "https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js",
+      "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js"
+    ],
+    wasm: [
+      "./ffmpeg-core.wasm",
+      "https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm",
+      "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm"
+    ]
   };
 
-  function loadScript(src) {
-    return new Promise((resolve, reject) => {
-      const sc = document.createElement("script");
-      sc.src = src;
-      sc.crossOrigin = "anonymous"; // obligatorio bajo COEP require-corp
-      sc.onload = () => resolve(src);
-      sc.onerror = () => reject(new Error("No se pudo cargar " + src));
-      document.head.appendChild(sc);
-    });
-  }
+  const loadLog = [];
+  function logLoad(msg) { loadLog.push(msg); if (window.DEBUG_FFMPEG) console.log("[loader]", msg); }
+  window.getFFmpegLoadLog = () => loadLog.slice();
 
-  // Descarga un recurso y lo convierte en blob: URL (evita bloqueos COEP/CORS del worker y del wasm)
+  // Descarga un recurso y lo convierte en blob: URL del MISMO origen.
+  // Esto evita por completo ERR_BLOCKED_BY_RESPONSE...ByCoep: el navegador
+  // solo bloquea sub-recursos cross-origin; un blob: nunca lo es.
   async function toBlobURL(url, mime) {
-    const res = await fetch(url, { mode: "cors", credentials: "omit" });
+    const res = await fetch(url, { mode: "cors", credentials: "omit", cache: "force-cache" });
     if (!res.ok) throw new Error("HTTP " + res.status + " en " + url);
     const buf = await res.arrayBuffer();
+    if (!buf.byteLength) throw new Error("Respuesta vacia en " + url);
     return URL.createObjectURL(new Blob([buf], { type: mime }));
   }
 
   async function firstBlobURL(urls, mime) {
     let lastErr = null;
     for (const u of urls) {
-      try { return await toBlobURL(u, mime); } catch (e) { lastErr = e; }
+      try {
+        const b = await toBlobURL(u, mime);
+        logLoad("OK " + u);
+        return b;
+      } catch (e) {
+        lastErr = e;
+        logLoad("FALLO " + u + " -> " + (e && e.message ? e.message : e));
+      }
     }
     throw lastErr || new Error("Recurso no disponible");
+  }
+
+  // Inyecta un script desde una blob: URL (nunca desde el CDN directo)
+  function loadScriptFromBlob(blobUrl) {
+    return new Promise((resolve, reject) => {
+      const sc = document.createElement("script");
+      sc.src = blobUrl;
+      sc.onload = () => resolve();
+      sc.onerror = () => reject(new Error("No se pudo ejecutar la libreria FFmpeg"));
+      document.head.appendChild(sc);
+    });
   }
 
   function getFFmpegClass() {
@@ -1203,12 +1230,11 @@
     setStatus("Cargando motor MP4...", 10);
 
     try {
-      // a) Libreria principal: local primero, CDN despues
+      // a) Libreria principal: se descarga por fetch y se ejecuta como blob (inmune a COEP)
       if (!getFFmpegClass()) {
-        try { await loadScript(LOCAL.lib); } catch (e) { /* sin copia local */ }
-      }
-      if (!getFFmpegClass()) {
-        await loadScript(CDN.lib);
+        const libBlob = await firstBlobURL(SOURCES.lib, "text/javascript");
+        await loadScriptFromBlob(libBlob);
+        URL.revokeObjectURL(libBlob);
       }
       const FFmpegClass = getFFmpegClass();
       if (!FFmpegClass) throw new Error("Libreria FFmpeg no cargada correctamente.");
@@ -1221,13 +1247,13 @@
       ffmpeg.on("log", ({ message }) => { if (window.DEBUG_FFMPEG) console.log(message); });
 
       setStatus("Descargando nucleo MP4 (~30 MB la primera vez)...", 35);
-      const coreURL = await firstBlobURL([LOCAL.core, CDN.core], "text/javascript");
-      const wasmURL = await firstBlobURL([LOCAL.wasm, CDN.wasm], "application/wasm");
+      const coreURL = await firstBlobURL(SOURCES.core, "text/javascript");
+      const wasmURL = await firstBlobURL(SOURCES.wasm, "application/wasm");
 
       const cfg = { coreURL, wasmURL };
       // El worker de @ffmpeg/ffmpeg 0.12.x no puede crearse desde otro origen: lo pasamos como blob
       try {
-        cfg.classWorkerURL = await firstBlobURL([LOCAL.worker, CDN.worker], "text/javascript");
+        cfg.classWorkerURL = await firstBlobURL(SOURCES.worker, "text/javascript");
       } catch (e) { /* si no existe, el worker por defecto sirve cuando la lib es local */ }
 
       setStatus("Inicializando motor...", 60);
@@ -1240,6 +1266,7 @@
       $("btnLoad").disabled = false;
       setStatus("✗ Error al cargar motor: " + (err && err.message ? err.message : String(err)), 0);
       console.error(err);
+      console.error("Detalle de intentos de carga:\n" + loadLog.join("\n"));
     } finally {
       engineLoading = false;
     }
