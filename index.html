@@ -1148,67 +1148,119 @@
   let ffmpeg = null;
   let engineLoading = false;
 
-  // Rutas locales (si estan en el deploy) + respaldos CDN (unpkg y jsDelivr)
-  const SOURCES = {
-    lib: [
-      "./ffmpeg.js",
-      "./src_ffmpeg.js",
-      "./ffmpeg.umd.js",
-      "https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js",
-      "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"
-    ],
-    worker: [
-      "./814.ffmpeg.js",
-      "./src_814.ffmpeg.js",
-      "https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/814.ffmpeg.js",
-      "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/814.ffmpeg.js"
-    ],
-    core: [
-      "./ffmpeg-core.js",
-      "./src_ffmpeg-core.js",
-      "./src/ffmpeg-core.js",
-      "./dist/ffmpeg-core.js",
-      "https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js",
-      "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js"
-    ],
-    wasm: [
-      "./ffmpeg-core.wasm",
-      "./src_ffmpeg-core.wasm",
-      "./src/ffmpeg-core.wasm",
-      "./dist/ffmpeg-core.wasm",
-      "https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm",
-      "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm"
-    ]
-  };
+  // Bases donde puede vivir el par nucleo (ffmpeg-core.js + ffmpeg-core.wasm).
+  // IMPORTANTE: el .js y el .wasm DEBEN venir de la misma base y version.
+  const CORE_BASES = [
+    "./",
+    "./dist/",
+    "./src/",
+    "https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd/",
+    "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/"
+  ];
+
+  // Bases de la libreria (ffmpeg.js + su worker 814.ffmpeg.js), tambien en pareja.
+  const LIB_BASES = [
+    "./",
+    "./dist/",
+    "https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/",
+    "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/"
+  ];
 
   const loadLog = [];
   function logLoad(msg) { loadLog.push(msg); if (window.DEBUG_FFMPEG) console.log("[loader]", msg); }
   window.getFFmpegLoadLog = () => loadLog.slice();
 
-  // Descarga un recurso y lo convierte en blob: URL del MISMO origen.
-  // Esto evita por completo ERR_BLOCKED_BY_RESPONSE...ByCoep: el navegador
-  // solo bloquea sub-recursos cross-origin; un blob: nunca lo es.
-  async function toBlobURL(url, mime) {
+  // ---- Descarga + VALIDACION de contenido -------------------------------
+  // El bug real: en Vercel una ruta inexistente puede responder 200 con el
+  // index.html (fallback SPA). Asi "./ffmpeg-core.js" daba OK, pero el blob
+  // contenia HTML -> el worker hacia importScripts(blob) y createFFmpegCore
+  // nunca se definia => "failed to import ffmpeg-core.js".
+  async function fetchBuf(url) {
     const res = await fetch(url, { mode: "cors", credentials: "omit", cache: "force-cache" });
     if (!res.ok) throw new Error("HTTP " + res.status + " en " + url);
     const buf = await res.arrayBuffer();
     if (!buf.byteLength) throw new Error("Respuesta vacia en " + url);
+    return buf;
+  }
+
+  function headText(buf, n) {
+    return new TextDecoder("utf-8", { fatal: false }).decode(new Uint8Array(buf, 0, Math.min(n || 4096, buf.byteLength)));
+  }
+
+  function looksLikeHtml(buf) {
+    const t = headText(buf, 512).trim().toLowerCase();
+    return t.startsWith("<!doctype") || t.startsWith("<html") || t.startsWith("<head") || t.startsWith("<?xml");
+  }
+
+  function assertJs(buf, url, mustContain) {
+    if (looksLikeHtml(buf)) throw new Error("HTML en vez de JS (fallback del servidor) en " + url);
+    if (mustContain) {
+      // Buscamos el marcador en todo el archivo (el core son ~100 KB de glue code)
+      const full = new TextDecoder("utf-8", { fatal: false }).decode(new Uint8Array(buf));
+      if (full.indexOf(mustContain) === -1) throw new Error("JS sin '" + mustContain + "' en " + url);
+    }
+    return buf;
+  }
+
+  function assertWasm(buf, url) {
+    const b = new Uint8Array(buf, 0, Math.min(4, buf.byteLength));
+    // Magic number de WebAssembly: 00 61 73 6D  ("\0asm")
+    if (!(b[0] === 0x00 && b[1] === 0x61 && b[2] === 0x73 && b[3] === 0x6d)) {
+      throw new Error("No es un .wasm valido en " + url);
+    }
+    if (buf.byteLength < 1000000) throw new Error("wasm demasiado pequeno (" + buf.byteLength + " bytes) en " + url);
+    return buf;
+  }
+
+  function toBlobURLFromBuf(buf, mime) {
     return URL.createObjectURL(new Blob([buf], { type: mime }));
   }
 
-  async function firstBlobURL(urls, mime) {
+  // ---- Carga del par nucleo (js + wasm) de la MISMA base ----------------
+  async function loadCorePair() {
     let lastErr = null;
-    for (const u of urls) {
+    for (const base of CORE_BASES) {
+      const jsUrl = base + "ffmpeg-core.js";
+      const wasmUrl = base + "ffmpeg-core.wasm";
       try {
-        const b = await toBlobURL(u, mime);
-        logLoad("OK " + u);
-        return b;
+        const jsBuf = assertJs(await fetchBuf(jsUrl), jsUrl, "createFFmpegCore");
+        const wasmBuf = assertWasm(await fetchBuf(wasmUrl), wasmUrl);
+        logLoad("OK par nucleo -> " + base);
+        return {
+          coreURL: toBlobURLFromBuf(jsBuf, "text/javascript"),
+          wasmURL: toBlobURLFromBuf(wasmBuf, "application/wasm")
+        };
       } catch (e) {
         lastErr = e;
-        logLoad("FALLO " + u + " -> " + (e && e.message ? e.message : e));
+        logLoad("FALLO par nucleo " + base + " -> " + (e && e.message ? e.message : e));
       }
     }
-    throw lastErr || new Error("Recurso no disponible");
+    throw lastErr || new Error("Nucleo FFmpeg no disponible");
+  }
+
+  // ---- Carga de la libreria + su worker de la MISMA base ----------------
+  async function loadLibPair() {
+    let lastErr = null;
+    for (const base of LIB_BASES) {
+      const jsUrl = base + "ffmpeg.js";
+      try {
+        const jsBuf = assertJs(await fetchBuf(jsUrl), jsUrl, "FFmpegWASM");
+        let workerURL = null;
+        const wUrl = base + "814.ffmpeg.js";
+        try {
+          const wBuf = assertJs(await fetchBuf(wUrl), wUrl, "importScripts");
+          workerURL = toBlobURLFromBuf(wBuf, "text/javascript");
+        } catch (e) {
+          logLoad("AVISO worker " + wUrl + " -> " + (e && e.message ? e.message : e));
+        }
+        logLoad("OK libreria -> " + base);
+        return { libURL: toBlobURLFromBuf(jsBuf, "text/javascript"), workerURL };
+      } catch (e) {
+        lastErr = e;
+        logLoad("FALLO libreria " + base + " -> " + (e && e.message ? e.message : e));
+      }
+    }
+    throw lastErr || new Error("Libreria FFmpeg no disponible");
   }
 
   // Inyecta un script desde una blob: URL (nunca desde el CDN directo)
@@ -1223,8 +1275,6 @@
   }
 
   function getFFmpegClass() {
-    // OJO: no declarar "const { FFmpeg }" y ademas usar "typeof FFmpeg" en el mismo scope:
-    // eso provocaba el error "Cannot access 'FFmpeg' before initialization" (TDZ).
     if (window.FFmpegWASM && window.FFmpegWASM.FFmpeg) return window.FFmpegWASM.FFmpeg;
     if (window.FFmpeg && typeof window.FFmpeg === "function") return window.FFmpeg;
     if (window.FFmpeg && window.FFmpeg.FFmpeg) return window.FFmpeg.FFmpeg;
@@ -1237,12 +1287,15 @@
     $("btnLoad").disabled = true;
     setStatus("Cargando motor MP4...", 10);
 
+    let workerBlobURL = null;
     try {
-      // a) Libreria principal: se descarga por fetch y se ejecuta como blob (inmune a COEP)
+      // a) Libreria principal (+ worker), descargada por fetch y ejecutada como blob
+      let libPair = null;
       if (!getFFmpegClass()) {
-        const libBlob = await firstBlobURL(SOURCES.lib, "text/javascript");
-        await loadScriptFromBlob(libBlob);
-        URL.revokeObjectURL(libBlob);
+        libPair = await loadLibPair();
+        await loadScriptFromBlob(libPair.libURL);
+        URL.revokeObjectURL(libPair.libURL);
+        workerBlobURL = libPair.workerURL;
       }
       const FFmpegClass = getFFmpegClass();
       if (!FFmpegClass) throw new Error("Libreria FFmpeg no cargada correctamente.");
@@ -1255,14 +1308,10 @@
       ffmpeg.on("log", ({ message }) => { if (window.DEBUG_FFMPEG) console.log(message); });
 
       setStatus("Descargando nucleo MP4 (~30 MB la primera vez)...", 35);
-      const coreURL = await firstBlobURL(SOURCES.core, "text/javascript");
-      const wasmURL = await firstBlobURL(SOURCES.wasm, "application/wasm");
+      const { coreURL, wasmURL } = await loadCorePair();
 
       const cfg = { coreURL, wasmURL };
-      // El worker de @ffmpeg/ffmpeg 0.12.x no puede crearse desde otro origen: lo pasamos como blob
-      try {
-        cfg.classWorkerURL = await firstBlobURL(SOURCES.worker, "text/javascript");
-      } catch (e) { /* si no existe, el worker por defecto sirve cuando la lib es local */ }
+      if (workerBlobURL) cfg.classWorkerURL = workerBlobURL;
 
       setStatus("Inicializando motor...", 60);
       await ffmpeg.load(cfg);
@@ -1272,7 +1321,8 @@
     } catch (err) {
       ffmpeg = null;
       $("btnLoad").disabled = false;
-      setStatus("✗ Error al cargar motor: " + (err && err.message ? err.message : String(err)), 0);
+      const msg = err && err.message ? err.message : String(err);
+      setStatus("✗ Error al cargar motor: " + msg, 0);
       console.error(err);
       console.error("Detalle de intentos de carga:\n" + loadLog.join("\n"));
     } finally {
