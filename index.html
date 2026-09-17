@@ -5,16 +5,12 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8E%AC%3C/text%3E%3C/svg%3E">
 
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Editor de Shorts v13.5</title>
+<title>Editor de Shorts v13.6</title>
 
 <!-- 1. Google Fonts Integradas -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@700&family=Comic+Neue:ital,wght@1,700&family=Courier+Prime:ital,wght@1,700&family=Inter:wght@400;500;600;700;800&family=Montserrat:wght@800;900&family=Oswald:wght@700&family=Playfair+Display:ital,wght@1,700&family=Press+Start+2P&family=Protest+Revolution&family=Yellowtail&display=swap" rel="stylesheet">
-
-<!-- FFmpeg WASM: se descarga por fetch() y se ejecuta desde blob: (mismo origen).
-     NO usar <script src> directo al CDN: con COEP require-corp el navegador lo bloquea
-     (ERR_BLOCKED_BY_RESPONSE.NotSameOriginAfterDefaultedToSameOriginByCoep). -->
 
 <style>
   :root {
@@ -645,7 +641,7 @@
 <body>
 
 <header>
-  <h1>Editor de Shorts v13.5</h1>
+  <h1>Editor de Shorts v13.6</h1>
   
   <!-- Desplegable para Nuevos Usuarios -->
   <div class="guide-dropdown-wrapper">
@@ -1144,37 +1140,26 @@
     }
   };
 
-  // ======= Logica FFmpeg (v13.5 - corregida) =======
+  // ======= Logica FFmpeg (v13.6 - CDN Unificado) =======
   let ffmpeg = null;
   let engineLoading = false;
 
-  // Bases donde puede vivir el par nucleo (ffmpeg-core.js + ffmpeg-core.wasm).
-  // IMPORTANTE: el .js y el .wasm DEBEN venir de la misma base y version.
-  const CORE_BASES = [
-    "./",
-    "./dist/",
-    "./src/",
-    "https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd/",
-    "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/"
+  const VER_LIB = "0.12.10", VER_CORE = "0.12.6";
+
+  const LIB_BASES = [
+    `https://unpkg.com/@ffmpeg/ffmpeg@${VER_LIB}/dist/umd/`,
+    `https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@${VER_LIB}/dist/umd/`
   ];
 
-  // Bases de la libreria (ffmpeg.js + su worker 814.ffmpeg.js), tambien en pareja.
-  const LIB_BASES = [
-    "./",
-    "./dist/",
-    "https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/",
-    "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/"
+  const CORE_BASES = [
+    `https://unpkg.com/@ffmpeg/core@${VER_CORE}/dist/umd/`,
+    `https://cdn.jsdelivr.net/npm/@ffmpeg/core@${VER_CORE}/dist/umd/`
   ];
 
   const loadLog = [];
   function logLoad(msg) { loadLog.push(msg); if (window.DEBUG_FFMPEG) console.log("[loader]", msg); }
   window.getFFmpegLoadLog = () => loadLog.slice();
 
-  // ---- Descarga + VALIDACION de contenido -------------------------------
-  // El bug real: en Vercel una ruta inexistente puede responder 200 con el
-  // index.html (fallback SPA). Asi "./ffmpeg-core.js" daba OK, pero el blob
-  // contenia HTML -> el worker hacia importScripts(blob) y createFFmpegCore
-  // nunca se definia => "failed to import ffmpeg-core.js".
   async function fetchBuf(url) {
     const res = await fetch(url, { mode: "cors", credentials: "omit", cache: "force-cache" });
     if (!res.ok) throw new Error("HTTP " + res.status + " en " + url);
@@ -1195,7 +1180,6 @@
   function assertJs(buf, url, mustContain) {
     if (looksLikeHtml(buf)) throw new Error("HTML en vez de JS (fallback del servidor) en " + url);
     if (mustContain) {
-      // Buscamos el marcador en todo el archivo (el core son ~100 KB de glue code)
       const full = new TextDecoder("utf-8", { fatal: false }).decode(new Uint8Array(buf));
       if (full.indexOf(mustContain) === -1) throw new Error("JS sin '" + mustContain + "' en " + url);
     }
@@ -1204,7 +1188,6 @@
 
   function assertWasm(buf, url) {
     const b = new Uint8Array(buf, 0, Math.min(4, buf.byteLength));
-    // Magic number de WebAssembly: 00 61 73 6D  ("\0asm")
     if (!(b[0] === 0x00 && b[1] === 0x61 && b[2] === 0x73 && b[3] === 0x6d)) {
       throw new Error("No es un .wasm valido en " + url);
     }
@@ -1216,7 +1199,6 @@
     return URL.createObjectURL(new Blob([buf], { type: mime }));
   }
 
-  // ---- Carga del par nucleo (js + wasm) de la MISMA base ----------------
   async function loadCorePair() {
     let lastErr = null;
     for (const base of CORE_BASES) {
@@ -1238,32 +1220,26 @@
     throw lastErr || new Error("Nucleo FFmpeg no disponible");
   }
 
-  // ---- Carga de la libreria + su worker de la MISMA base ----------------
   async function loadLibPair() {
     let lastErr = null;
     for (const base of LIB_BASES) {
       const jsUrl = base + "ffmpeg.js";
+      const wUrl = base + "814.ffmpeg.js";
       try {
         const jsBuf = assertJs(await fetchBuf(jsUrl), jsUrl, "FFmpegWASM");
-        let workerURL = null;
-        const wUrl = base + "814.ffmpeg.js";
-        try {
-          const wBuf = assertJs(await fetchBuf(wUrl), wUrl, "importScripts");
-          workerURL = toBlobURLFromBuf(wBuf, "text/javascript");
-        } catch (e) {
-          logLoad("AVISO worker " + wUrl + " -> " + (e && e.message ? e.message : e));
-        }
-        logLoad("OK libreria -> " + base);
+        const wBuf = assertJs(await fetchBuf(wUrl), wUrl, "importScripts");
+        const workerURL = toBlobURLFromBuf(wBuf, "text/javascript");
+        
+        logLoad("OK libreria y worker -> " + base);
         return { libURL: toBlobURLFromBuf(jsBuf, "text/javascript"), workerURL };
       } catch (e) {
         lastErr = e;
         logLoad("FALLO libreria " + base + " -> " + (e && e.message ? e.message : e));
       }
     }
-    throw lastErr || new Error("Libreria FFmpeg no disponible");
+    throw lastErr || new Error("Libreria o Worker de FFmpeg no disponible");
   }
 
-  // Inyecta un script desde una blob: URL (nunca desde el CDN directo)
   function loadScriptFromBlob(blobUrl) {
     return new Promise((resolve, reject) => {
       const sc = document.createElement("script");
@@ -1289,7 +1265,6 @@
 
     let workerBlobURL = null;
     try {
-      // a) Libreria principal (+ worker), descargada por fetch y ejecutada como blob
       let libPair = null;
       if (!getFFmpegClass()) {
         libPair = await loadLibPair();
@@ -1341,9 +1316,8 @@
         clearTimeout(timer);
         resolve();
       };
-      // Si el tiempo es practicamente el mismo, 'seeked' puede no dispararse nunca
       if (Math.abs(vid.currentTime - time) < 0.0005) { requestAnimationFrame(finish); return; }
-      const timer = setTimeout(finish, 2000); // salvavidas anti-cuelgue
+      const timer = setTimeout(finish, 2000);
       vid.addEventListener("seeked", finish);
       try { vid.currentTime = Math.min(time, Math.max(0, (vid.duration || 0) - 0.01)); }
       catch (e) { finish(); }
@@ -1394,7 +1368,6 @@
 
       setStatus("Procesando video final...", 70);
       
-      // H.264 + yuv420p + faststart = MP4 que TikTok/Instagram aceptan sin recodificar
       const cmd = [
         '-framerate', `${fps}`,
         '-i', 'frame_%05d.jpg',
@@ -1425,7 +1398,6 @@
       dlLink.download = "short_" + Date.now() + ".mp4";
       dlLink.hidden = false;
 
-      // Limpieza de memoria en FFmpeg
       for (const f of fileList) {
         try { await ffmpeg.deleteFile(f); } catch(e) {}
       }
