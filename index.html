@@ -1146,19 +1146,31 @@
 
   const VER_LIB = "0.12.10", VER_CORE = "0.12.6";
 
-  const LIB_BASES = [
-    `https://unpkg.com/@ffmpeg/ffmpeg@${VER_LIB}/dist/umd/`,
-    `https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@${VER_LIB}/dist/umd/`
-  ];
+  // Base del propio sitio (para archivos self-hosted en el repo)
+  const LOCAL_BASE = new URL("./", location.href).href;
 
-  const CORE_BASES = [
-    `https://unpkg.com/@ffmpeg/core@${VER_CORE}/dist/umd/`,
-    `https://cdn.jsdelivr.net/npm/@ffmpeg/core@${VER_CORE}/dist/umd/`
+  const CDN_LIB = [
+    "https://unpkg.com/@ffmpeg/ffmpeg@" + VER_LIB + "/dist/umd/",
+    "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@" + VER_LIB + "/dist/umd/"
+  ];
+  const CDN_CORE = [
+    "https://unpkg.com/@ffmpeg/core@" + VER_CORE + "/dist/umd/",
+    "https://cdn.jsdelivr.net/npm/@ffmpeg/core@" + VER_CORE + "/dist/umd/"
   ];
 
   const loadLog = [];
   function logLoad(msg) { loadLog.push(msg); if (window.DEBUG_FFMPEG) console.log("[loader]", msg); }
   window.getFFmpegLoadLog = () => loadLog.slice();
+  function errMsg(e) { return e && e.message ? e.message : String(e); }
+
+  async function urlExists(url) {
+    try {
+      let r = await fetch(url, { method: "HEAD", cache: "no-store" });
+      if (r.ok) return true;
+      r = await fetch(url, { method: "GET", headers: { Range: "bytes=0-0" }, cache: "no-store" });
+      return r.ok || r.status === 206;
+    } catch (e) { return false; }
+  }
 
   async function fetchBuf(url) {
     const res = await fetch(url, { mode: "cors", credentials: "omit", cache: "force-cache" });
@@ -1171,12 +1183,10 @@
   function headText(buf, n) {
     return new TextDecoder("utf-8", { fatal: false }).decode(new Uint8Array(buf, 0, Math.min(n || 4096, buf.byteLength)));
   }
-
   function looksLikeHtml(buf) {
     const t = headText(buf, 512).trim().toLowerCase();
     return t.startsWith("<!doctype") || t.startsWith("<html") || t.startsWith("<head") || t.startsWith("<?xml");
   }
-
   function assertJs(buf, url, mustContain) {
     if (looksLikeHtml(buf)) throw new Error("HTML en vez de JS (fallback del servidor) en " + url);
     if (mustContain) {
@@ -1185,67 +1195,17 @@
     }
     return buf;
   }
-
-  function assertWasm(buf, url) {
-    const b = new Uint8Array(buf, 0, Math.min(4, buf.byteLength));
-    if (!(b[0] === 0x00 && b[1] === 0x61 && b[2] === 0x73 && b[3] === 0x6d)) {
-      throw new Error("No es un .wasm valido en " + url);
-    }
-    if (buf.byteLength < 1000000) throw new Error("wasm demasiado pequeno (" + buf.byteLength + " bytes) en " + url);
-    return buf;
-  }
-
   function toBlobURLFromBuf(buf, mime) {
     return URL.createObjectURL(new Blob([buf], { type: mime }));
   }
 
-  async function loadCorePair() {
-    let lastErr = null;
-    for (const base of CORE_BASES) {
-      const jsUrl = base + "ffmpeg-core.js";
-      const wasmUrl = base + "ffmpeg-core.wasm";
-      try {
-        const jsBuf = assertJs(await fetchBuf(jsUrl), jsUrl, "createFFmpegCore");
-        const wasmBuf = assertWasm(await fetchBuf(wasmUrl), wasmUrl);
-        logLoad("OK par nucleo -> " + base);
-        return {
-          coreURL: toBlobURLFromBuf(jsBuf, "text/javascript"),
-          wasmURL: toBlobURLFromBuf(wasmBuf, "application/wasm")
-        };
-      } catch (e) {
-        lastErr = e;
-        logLoad("FALLO par nucleo " + base + " -> " + (e && e.message ? e.message : e));
-      }
-    }
-    throw lastErr || new Error("Nucleo FFmpeg no disponible");
-  }
-
-  async function loadLibPair() {
-    let lastErr = null;
-    for (const base of LIB_BASES) {
-      const jsUrl = base + "ffmpeg.js";
-      const wUrl = base + "814.ffmpeg.js";
-      try {
-        const jsBuf = assertJs(await fetchBuf(jsUrl), jsUrl, "FFmpegWASM");
-        const wBuf = assertJs(await fetchBuf(wUrl), wUrl, "importScripts");
-        const workerURL = toBlobURLFromBuf(wBuf, "text/javascript");
-        
-        logLoad("OK libreria y worker -> " + base);
-        return { libURL: toBlobURLFromBuf(jsBuf, "text/javascript"), workerURL };
-      } catch (e) {
-        lastErr = e;
-        logLoad("FALLO libreria " + base + " -> " + (e && e.message ? e.message : e));
-      }
-    }
-    throw lastErr || new Error("Libreria o Worker de FFmpeg no disponible");
-  }
-
-  function loadScriptFromBlob(blobUrl) {
+  function loadScript(src, useCrossOrigin) {
     return new Promise((resolve, reject) => {
       const sc = document.createElement("script");
-      sc.src = blobUrl;
+      sc.src = src;
+      if (useCrossOrigin) sc.crossOrigin = "anonymous";
       sc.onload = () => resolve();
-      sc.onerror = () => reject(new Error("No se pudo ejecutar la libreria FFmpeg"));
+      sc.onerror = () => reject(new Error("No se pudo cargar " + src));
       document.head.appendChild(sc);
     });
   }
@@ -1257,47 +1217,123 @@
     return null;
   }
 
+  // Devuelve { classWorkerURL, revoke }
+  // IMPORTANTE: un Worker NO puede crearse desde otro origen (CDN) -> en ese caso
+  // el worker (814.ffmpeg.js) debe ir por blob. Si los archivos estan en tu propio
+  // dominio, se usan directo y es mucho mas estable.
+  async function ensureLib() {
+    if (getFFmpegClass()) return { classWorkerURL: window.__FFMPEG_WORKER_URL || undefined };
+
+    // 1) Intento self-hosted (mismo origen)
+    if (await urlExists(LOCAL_BASE + "ffmpeg.js") && await urlExists(LOCAL_BASE + "814.ffmpeg.js")) {
+      try {
+        await loadScript(LOCAL_BASE + "ffmpeg.js", false);
+        if (!getFFmpegClass()) throw new Error("ffmpeg.js local sin clase FFmpeg");
+        logLoad("OK libreria (mismo origen) -> " + LOCAL_BASE);
+        window.__FFMPEG_WORKER_URL = LOCAL_BASE + "814.ffmpeg.js";
+        return { classWorkerURL: window.__FFMPEG_WORKER_URL };
+      } catch (e) {
+        logLoad("FALLO libreria local -> " + errMsg(e));
+      }
+    }
+
+    // 2) CDN: libreria por script normal + worker por blob
+    let lastErr = null;
+    for (const base of CDN_LIB) {
+      try {
+        const wBuf = assertJs(await fetchBuf(base + "814.ffmpeg.js"), base + "814.ffmpeg.js", "importScripts");
+        const workerURL = toBlobURLFromBuf(wBuf, "text/javascript");
+        await loadScript(base + "ffmpeg.js", true);
+        if (!getFFmpegClass()) throw new Error("ffmpeg.js sin clase FFmpeg en " + base);
+        logLoad("OK libreria (CDN) -> " + base);
+        window.__FFMPEG_WORKER_URL = workerURL;
+        return { classWorkerURL: workerURL };
+      } catch (e) {
+        lastErr = e;
+        logLoad("FALLO libreria " + base + " -> " + errMsg(e));
+      }
+    }
+    throw lastErr || new Error("Libreria FFmpeg no disponible");
+  }
+
+  // Lista de candidatos de nucleo, en orden de fiabilidad.
+  // CLAVE DEL BUG: pasar coreURL/wasmURL como blob: hace que el worker falle con
+  // "failed to import ffmpeg-core.js". Se pasan como URL directa (http).
+  async function coreCandidates() {
+    const out = [];
+    if (await urlExists(LOCAL_BASE + "ffmpeg-core.wasm") && await urlExists(LOCAL_BASE + "ffmpeg-core.js")) {
+      out.push({ kind: "url", base: LOCAL_BASE });
+    }
+    for (const base of CDN_CORE) out.push({ kind: "url", base });
+    for (const base of CDN_CORE) out.push({ kind: "blob", base });
+    return out;
+  }
+
+  async function buildCoreCfg(cand) {
+    const jsUrl = cand.base + "ffmpeg-core.js";
+    const wasmUrl = cand.base + "ffmpeg-core.wasm";
+    if (cand.kind === "url") return { coreURL: jsUrl, wasmURL: wasmUrl };
+    const jsBuf = assertJs(await fetchBuf(jsUrl), jsUrl, "createFFmpegCore");
+    const wasmBuf = await fetchBuf(wasmUrl);
+    const b = new Uint8Array(wasmBuf, 0, 4);
+    if (!(b[0] === 0x00 && b[1] === 0x61 && b[2] === 0x73 && b[3] === 0x6d)) throw new Error("No es un .wasm valido en " + wasmUrl);
+    return {
+      coreURL: toBlobURLFromBuf(jsBuf, "text/javascript"),
+      wasmURL: toBlobURLFromBuf(wasmBuf, "application/wasm")
+    };
+  }
+
+  function attachHandlers(inst) {
+    inst.on("progress", ({ progress }) => {
+      const pct = Math.round(progress * 100);
+      if (pct > 0 && pct <= 100) setStatus("\u2699\ufe0f Generando MP4 final... " + pct + "%", 70 + pct * 0.3);
+    });
+    inst.on("log", ({ message }) => { if (window.DEBUG_FFMPEG) console.log(message); });
+  }
+
   async function initFFmpeg() {
     if (engineLoading) return;
     engineLoading = true;
     $("btnLoad").disabled = true;
     setStatus("Cargando motor MP4...", 10);
 
-    let workerBlobURL = null;
     try {
-      let libPair = null;
-      if (!getFFmpegClass()) {
-        libPair = await loadLibPair();
-        await loadScriptFromBlob(libPair.libURL);
-        URL.revokeObjectURL(libPair.libURL);
-        workerBlobURL = libPair.workerURL;
-      }
+      const { classWorkerURL } = await ensureLib();
       const FFmpegClass = getFFmpegClass();
       if (!FFmpegClass) throw new Error("Libreria FFmpeg no cargada correctamente.");
 
-      ffmpeg = new FFmpegClass();
-      ffmpeg.on("progress", ({ progress }) => {
-        const pct = Math.round(progress * 100);
-        if (pct > 0 && pct <= 100) setStatus(`⚙️ Generando MP4 final... ${pct}%`, 70 + pct * 0.3);
-      });
-      ffmpeg.on("log", ({ message }) => { if (window.DEBUG_FFMPEG) console.log(message); });
+      setStatus("Descargando nucleo MP4 (~31 MB la primera vez)...", 35);
+      const cands = await coreCandidates();
 
-      setStatus("Descargando nucleo MP4 (~30 MB la primera vez)...", 35);
-      const { coreURL, wasmURL } = await loadCorePair();
+      let lastErr = null;
+      for (const cand of cands) {
+        let inst = null;
+        try {
+          const coreCfg = await buildCoreCfg(cand);
+          inst = new FFmpegClass();
+          attachHandlers(inst);
+          const cfg = Object.assign({}, coreCfg);
+          if (classWorkerURL) cfg.classWorkerURL = classWorkerURL;
 
-      const cfg = { coreURL, wasmURL };
-      if (workerBlobURL) cfg.classWorkerURL = workerBlobURL;
+          setStatus("Inicializando motor (" + cand.kind + ")...", 60);
+          await inst.load(cfg);
 
-      setStatus("Inicializando motor...", 60);
-      await ffmpeg.load(cfg);
-
-      setStatus("✓ Motor MP4 listo para exportar.", 100);
-      $("btnRender").disabled = false;
+          ffmpeg = inst;
+          logLoad("OK nucleo [" + cand.kind + "] -> " + cand.base);
+          setStatus("\u2713 Motor MP4 listo para exportar.", 100);
+          $("btnRender").disabled = false;
+          return;
+        } catch (e) {
+          lastErr = e;
+          logLoad("FALLO nucleo [" + cand.kind + "] " + cand.base + " -> " + errMsg(e));
+          try { if (inst && inst.terminate) inst.terminate(); } catch (e2) {}
+        }
+      }
+      throw lastErr || new Error("Nucleo FFmpeg no disponible");
     } catch (err) {
       ffmpeg = null;
       $("btnLoad").disabled = false;
-      const msg = err && err.message ? err.message : String(err);
-      setStatus("✗ Error al cargar motor: " + msg, 0);
+      setStatus("\u2717 Error al cargar motor: " + errMsg(err), 0);
       console.error(err);
       console.error("Detalle de intentos de carga:\n" + loadLog.join("\n"));
     } finally {
@@ -1374,9 +1410,11 @@
         '-c:v', 'libx264',
         '-preset', 'veryfast',
         '-crf', '23',
-        '-profile:v', 'baseline',
-        '-level', '3.1',
+        '-profile:v', 'high',
+        '-level', '4.0',
         '-pix_fmt', 'yuv420p',
+        '-vf', 'scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black,format=yuv420p',
+        '-g', `${fps * 2}`,
         '-r', `${fps}`,
         '-movflags', '+faststart',
         '-an',
